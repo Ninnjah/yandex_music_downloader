@@ -1,8 +1,10 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
+import logging
 import time
-import telebot
 import os
+
+import telebot
 from telebot import types
 from API import (
     send_search_request_and_print_result,
@@ -19,9 +21,11 @@ from API import (
 )
 from dotenv import load_dotenv, find_dotenv
 import threading
-from loguru import logger
+# from loguru import logger
 import shutil
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 start_window = 0
 cur_dir = folder_music
 root_dir = folder_music
@@ -186,7 +190,8 @@ def download_monitor():
             try:
                 result = data[0](data[1])
                 bot.send_message(chat_id=data[2], text=result)
-            except:
+            except Exception as e:
+                logger.error(e, exc_info=True)
                 bot.send_message(chat_id=data[2], text=f"Что-то пошло не так при скачивании ID:{data[1]}. Посмотри log")
             download_queue.pop(0)
             bot.send_message(data[2], f"Всего осталось в очереди: {len(download_queue)} задачи")
@@ -202,6 +207,7 @@ def what_files(message):
     markup.add(item1, item2, item3)
     msg = bot.send_message(message.chat.id, 'Какие файлы тебе нужны?', reply_markup=markup)
     logger.info(f"Пользователь {message.chat.id} открыл инлайн меню просмотра файлов")
+
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -308,7 +314,9 @@ def callback_inline(call):
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text='/'+mess, reply_markup=markup)
     elif block_send_status:
         block_send_status = False
-@logger.catch
+
+
+# @logger.catch
 def echo_status(downloader_status, bot_status):
     while True:
         if not downloader_status or not bot_status:

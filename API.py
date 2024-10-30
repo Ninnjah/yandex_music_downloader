@@ -1,9 +1,13 @@
-from yandex_music import Client
-from loguru import logger
-import requests
 import os
+import logging
+
 import music_tag
+import requests
+
 from dotenv import load_dotenv, find_dotenv
+# from loguru import logger
+from yandex_music import Client
+from yandex_music.exceptions import YandexMusicError, NotFoundError
 
 load_dotenv(find_dotenv())
 client = Client(token=os.getenv('YA_TOKEN'))
@@ -11,13 +15,17 @@ client.init()
 folder_music = os.getenv('DOWNLOAD_PATH_MUSIC')
 folder_audiobooks = os.getenv('DOWNLOAD_PATH_BOOKS')
 folder_podcasts = os.getenv('DOWNLOAD_PATH_PODCASTS')
-wrong_symbols = r"#<$+%>!`&*‘|?{}“=>/:\@" # спецсимволы которые негативно влияют на создание каталогов и файлов
+wrong_symbols = r"#<$+%>!`&*‘|?{}“=>/:\@"  # спецсимволы которые негативно влияют на создание каталогов и файлов
 # настройки логирования
-logger.add(f"{folder_music}/log.log",
-           rotation='00:00', retention='1 week', compression="zip",
-           format="{time: DD-MM-YYYY HH:mm:ss} | {level} | {message}",
-           )
-@logger.catch
+logger = logging.getLogger(__name__)
+# logger.add(
+#     f"{folder_music}/log.log",
+#     rotation='00:00', retention='1 week', compression="zip",
+#     format="{time: DD-MM-YYYY HH:mm:ss} | {level} | {message}",
+# )
+
+
+# @logger.catch
 def search_and_download_artist(search: str):
     """Ищем лучший результат по запросу артиста и скачиваем все его песни в папку download с разбивкой по альбомам"""
 
@@ -41,20 +49,22 @@ def search_and_download_artist(search: str):
 
     return f"Успешно скачал артиста: {artist_name} с его {direkt_albums_count} альбомами."
 
-@logger.catch
+
+# @logger.catch
 def get_album_info(album_id):
-    """Получаем информацию о альбоме"""
+    """Получаем информацию об альбоме"""
     album = client.albumsWithTracks(album_id=album_id)
     return f"Альбом: {album['title']}\nартист:{', '. join([art['name'] for art in album['artists']])} \
             \nколичество треков: {album['track_count']}"
 
-@logger.catch
+
+# @logger.catch
 def download_album(album_id):
-    "Скачиваем альбом"
+    """Скачиваем альбом"""
     album = client.albumsWithTracks(album_id=album_id)
     album_echo = f"Album ID: {album['id']} / Album title - {album['title']}"
-    logger.info(album_echo) # вывод в лог
-    #создаем папку для альбома
+    logger.info(album_echo)  # вывод в лог
+    # создаем папку для альбома
     if album['artists'][0]['various']:
         album_folder = f"{folder_music}/Various artist/{album['title']} ({album['year']})"
     else:
@@ -72,7 +82,7 @@ def download_album(album_id):
 
         album_folder = f"{artist_folder}/{''.join([_ for _ in album['title'] if _ not in wrong_symbols])} ({album['year']})"
 
-    os.makedirs(os.path.dirname(f"{album_folder}/"),exist_ok=True)
+    os.makedirs(os.path.dirname(f"{album_folder}/"), exist_ok=True)
     album_cover_pic = f"{album_folder}/cover.jpg"
     # качаем обложку альбома
     with open(album_cover_pic, 'wb') as f:
@@ -84,14 +94,16 @@ def download_album(album_id):
     n_volume = 1
     for disk in album['volumes']:
         disk_echo = f"Start download: Volume №: {n_volume} из {len(album['volumes'])}"
-        logger.info(disk_echo) # вывод в лог
+        logger.info(disk_echo)  # вывод в лог
         n_volume += 1
 
-        for track in disk: # проходимся по каждому треку в диске
-            track_info = client.tracks_download_info(track_id=track['id'], get_direct_links=True) # узнаем информацию о треке
+        for track in disk:  # проходимся по каждому треку в диске
+            track_info = client.tracks_download_info(
+                track_id=track['id'], get_direct_links=True
+            )  # узнаем информацию о треке
             track_info.sort(reverse=True, key=lambda key: key['bitrate_in_kbps'])
             track_echo = f"Start Download: ID: {track['id']} {track['title']} bitrate: {track_info[0]['bitrate_in_kbps']} {track_info[0]['direct_link']}"
-            logger.info(track_echo) # вывод в лог
+            logger.info(track_echo)  # вывод в лог
             tag_info = client.tracks(track['id'])[0]
             info = {
                 'title': tag_info['title'],
@@ -100,7 +112,7 @@ def download_album(album_id):
                 'track_position': track['albums'][0]['track_position']['index'],
                 'total_track': album['track_count'],
                 'genre': tag_info['albums'][0]['genre'],
-                'artist': ', '. join([art['name'] for art in tag_info['artists']]),
+                'artist': tag_info['artists'][0]['name'],
                 'album_artist': [artist['name'] for artist in album['artists']],
                 'album': album['title'],
             }
@@ -148,29 +160,33 @@ def download_album(album_id):
             mp3['album_artist'] = info['album_artist']
             try:
                 lyrics = client.tracks_lyrics(track_id=track['id'], format='TEXT').fetch_lyrics()
-            except:
-                lyrics = False
-            if lyrics:
+            except NotFoundError:
+                pass
+            except Exception as e:
+                logger.error(e, e)
+            else:
                 with open(track_file.replace('.mp3', '.txt'), 'w', encoding='UTF8') as text_song:
                     text_song.write(lyrics)
                 mp3['lyrics'] = lyrics
-            with open(album_cover_pic, 'rb') as img_in:               #ложим картинку в тег "artwork"
+
+            with open(album_cover_pic, 'rb') as img_in:  # кладем картинку в тег "artwork"
                 mp3['artwork'] = img_in.read()
 
             mp3.save()
-            tags_echo = "Tag's is writed"
+            tags_echo = "Tag's is wrote"
             logger.info(tags_echo)  # вывод в лог
+
     return f"Успешно скачал альбом/сборник: {info['album']} с его {info['total_track']} композициями."
 
 
-@logger.catch
+# @logger.catch
 def get_book_info(album_id):
     """Получаем информацию о книге"""
     book = client.albumsWithTracks(album_id=album_id)
     return f"Аудиокнига:\n{book['title']}\nсодержание из {book['track_count']} частей."
 
 
-@logger.catch
+# @logger.catch
 def download_book(album_id):
     """Скачиваем аудиокнигу"""
     s = client.albumsWithTracks(album_id=album_id)
@@ -180,7 +196,7 @@ def download_book(album_id):
         if s['title'][i] in '.—':
             info_book['author'] = s['title'][:i].strip()
             if s['version']:
-                info_book['book_title'] = s['title'][i+1:].strip() +' ('+ s['version']+')'
+                info_book['book_title'] = s['title'][i+1:].strip() + ' (' + s['version']+')'
             else:
                 info_book['book_title'] = s['title'][i+1:].strip()
             break
@@ -263,22 +279,23 @@ def download_book(album_id):
     return f"Успешно скачал аудиокнигу: {info_book['book_title']} из {info_book['parts']} частей"
 
 
-@logger.catch
+# @logger.catch
 def get_podcast_info(podcast_id):
     """Получаем информацию о подкасте"""
     podcast = client.albumsWithTracks(album_id=podcast_id)
     return f"Подкаст:\n{podcast['title']}\nсодержание из {podcast['track_count']} выпусков."
 
 
-@logger.catch
+# @logger.catch
 def download_podcast(podcast_id):
     s = client.albumsWithTracks(album_id=podcast_id)
-    info_podcast = {}
-    info_podcast['title'] = s['title']
-    info_podcast['cover_url'] = 'https://' + s['cover_uri'].replace('%%', '1000x1000')
-    info_podcast['tracks'] = s['track_count']
-    info_podcast['short_description'] = s['short_description']
-    info_podcast['description'] = s['description']
+    info_podcast = {
+        'title': s['title'],
+        'cover_url': 'https://' + s['cover_uri'].replace('%%', '1000x1000'),
+        'tracks': s['track_count'],
+        'short_description': s['short_description'],
+        'description': s['description'],
+    }
 
     podcast_echo = f"Podcast ID: {podcast_id} / Podcast title - {info_podcast['title']}"
     logger.info(podcast_echo)  # вывод в лог
