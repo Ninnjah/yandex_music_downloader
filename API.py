@@ -114,7 +114,7 @@ def download_album(album_id):
                 'total_track': album['track_count'],
                 'genre': tag_info['albums'][0]['genre'],
                 'artist': artist_name or tag_info['artists'][0]['name'],
-                'album_artist': [artist_name or tag_info['artists'][0]['name']],
+                'album_artist': [artist['name'] for artist in album['artists']],
                 'album': album['title'],
             }
             if album['release_date']:
