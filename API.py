@@ -123,9 +123,8 @@ def download_album(album_id):
             else:
                 info['album_year'] = ''
 
-            disk_folder = f"{album_folder}/Disk {info['volume_number']}"
-            os.makedirs(os.path.dirname(f"{disk_folder}/"), exist_ok=True)
-            track_file = f"{disk_folder}/{info['track_position']} - {''.join([ _ for _ in info['title'][:80] if _ not in wrong_symbols])}.mp3"
+            os.makedirs(os.path.dirname(f"{album_folder}/"), exist_ok=True)
+            track_file = f"{album_folder}/{info['track_position']} - {''.join([ _ for _ in info['title'][:80] if _ not in wrong_symbols])}.mp3"
             # проверяем существование трека на сервере
             if os.path.exists(track_file):
                 track_echo_ok = "Track already exists. Continue."
