@@ -6,7 +6,6 @@ from typing import Tuple
 
 import music_tag
 import requests
-from mutagen.mp3 import MP3
 
 from dotenv import load_dotenv, find_dotenv
 from yandex_music import Album, Client, Track
@@ -251,16 +250,16 @@ def download_playlist(playlist_data: str):
     )
 
     for track_info in playlist.tracks:
-        track_path = _download_track(track_info.track)
+        track = track_info.track
+        track_path = _download_track(track)
         if track_path:
-            audio = MP3(track_path)
             if replace_playlist_path:
                 track_path = new_root / track_path.relative_to(old_root)
 
             playlist_entries.append(
                 {
                     "name": track_path.as_posix(),
-                    "title": " - ".join((audio['TPE1'][0], audio['TIT2'][0])),
+                    "title": " - ".join(track.artists_name()[0], track.title),
                     "duration": audio.info.length
                 }
             )
