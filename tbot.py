@@ -124,8 +124,9 @@ def input_data_album(message):
 def input_data_playlist(message):
     """Обрабатывает сообщение, запрашивает у пользователя информацию о плейлисте."""
     try:
-        playlist_owner = message.text.split("/")[-3]
-        playlist_id = message.text.split("/")[-1]
+        raw_data = message.text.split("?")[0]
+        playlist_owner = raw_data.split("/")[-3]
+        playlist_id = raw_data.split("/")[-1]
         logger.info('Playlist owner: %s / Playlist ID: %s', playlist_owner, playlist_id)
         msg = get_playlist_info(playlist_owner, playlist_id)
         bot.send_message(message.chat.id, msg)
