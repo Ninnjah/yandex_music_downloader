@@ -4,3 +4,4 @@ yandex-music
 music-tag
 loguru
 requests
+mutagen==1.47.0

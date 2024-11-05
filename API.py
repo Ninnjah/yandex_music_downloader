@@ -1,21 +1,43 @@
 import os
 import logging
+import time
+from pathlib import Path
+from typing import Tuple
 
 import music_tag
 import requests
+from mutagen.mp3 import MP3
 
 from dotenv import load_dotenv, find_dotenv
-from yandex_music import Client
-from yandex_music.exceptions import YandexMusicError, NotFoundError
+from yandex_music import Album, Client, Track
+from yandex_music.exceptions import NotFoundError
+
+from m3u8 import PlaylistGenerator
 
 load_dotenv(find_dotenv())
 client = Client(token=os.getenv("YA_TOKEN"))
 client.init()
 folder_music = os.getenv("DOWNLOAD_PATH_MUSIC")
+replace_playlist_path = int(os.getenv("REPLACE_PLAYLIST_PATH"))
 folder_audiobooks = os.getenv("DOWNLOAD_PATH_BOOKS")
 folder_podcasts = os.getenv("DOWNLOAD_PATH_PODCASTS")
 wrong_symbols = r"#<$+%>!`&*‘|?{}“=>/:\@"  # спецсимволы которые негативно влияют на создание каталогов и файлов
 logger = logging.getLogger(__name__)
+
+
+def retry(attempt_count: int = 3, timeout: float = 1):
+    def decorator(f):
+        def wrapper(*args, **kwargs):
+            for attempt in range(attempt_count):
+                try:
+                    return f(*args, **kwargs)
+                except Exception as e:
+                    if attempt + 1 == attempt_count:
+                        logger.warning("retry - %s", e)
+                    else:
+                        time.sleep(timeout)
+        return wrapper
+    return decorator
 
 
 def search_and_download_artist(search: str):
@@ -46,9 +68,125 @@ def search_and_download_artist(search: str):
         # проходимся по каждому диску в альбоме и загружаем его в папку
         download_album(album["id"])
 
-    return (
-        f"Успешно скачал артиста: {artist_name} с его {direct_albums_count} альбомами."
+    return f"Успешно скачал артиста: {artist_name} с его {direct_albums_count} альбомами."
+
+
+def _make_album_dir(album: Album) -> Tuple[Path, Path]:
+    if album.artists[0].various:
+        album_folder = Path(
+            folder_music, "Various artist", f"{album.title} ({album.year})"
+        )
+    else:
+        artist_id = album.artists[0].id
+        artist_name = album.artists[0].name
+        artist_folder = Path(folder_music, artist_name)
+        artist_cover_pic = Path(artist_folder, "artist.jpg")
+
+        artist_folder.mkdir(parents=True, exist_ok=True)
+
+        if not artist_cover_pic.exists():
+            artist_info = client.artists_brief_info(artist_id=artist_id)
+            artist_cover_link = artist_info.artist.cover.get_url(size="1000x1000")
+            with artist_cover_pic.open("wb") as f:
+                res = requests.get(artist_cover_link)
+                f.write(res.content)
+
+        album_folder = Path(artist_folder, f"{album.title} ({album.year})")
+
+    album_folder.mkdir(parents=True, exist_ok=True)
+    album_cover_pic = Path(album_folder, "cover.jpg")
+    if not album_cover_pic.exists():
+        with album_cover_pic.open("wb") as f:
+            res = requests.get(album.get_cover_url("1000x1000"))
+            f.write(res.content)
+
+    return album_folder, album_cover_pic
+
+
+@retry(attempt_count=5)
+def _download_track(track: Track) -> Path:
+    album = track.albums[0]
+    album_folder, album_cover_pic = _make_album_dir(album)
+
+    track_info = client.tracks_download_info(track_id=track.track_id, get_direct_links=True)
+    track_info = sorted(track_info, reverse=True, key=lambda key: key["bitrate_in_kbps"])[0]
+
+    logger.info(
+        "Start Download: ID: %s %s bitrate: %s %s",
+        track.track_id,
+        track.title,
+        track_info["bitrate_in_kbps"],
+        track_info["direct_link"],
     )
+
+    info = {
+        "title": track.title,
+        "volume_number": album.track_position.volume,
+        "total_volumes": len(album.volumes) if album.volumes else 1,
+        "track_position": album.track_position.index,
+        "total_track": album["track_count"],
+        "genre": album.genre,
+        "artist": track.artists_name()[0],
+        "album_artist": [artist for artist in album.artists_name()],
+        "album": album["title"],
+    }
+    if album["release_date"]:
+        info["album_year"] = album["release_date"][:10]
+    elif album["year"]:
+        info["album_year"] = album["year"]
+    else:
+        info["album_year"] = ""
+
+    track_file = (
+        album_folder /
+        f"{info['track_position']} - "
+        f"{''.join([_ for _ in info['title'][:80] if _ not in wrong_symbols])}.mp3"
+    )
+    if os.path.exists(track_file):
+        logger.info("Track already exists. Continue.")
+        return track_file
+
+    client.request.download(url=track_info["direct_link"], filename=track_file)
+    logger.info("Track downloaded. Start write tag's.")
+
+    # начинаем закачивать тэги в трек
+    mp3 = music_tag.load_file(track_file)
+    mp3["tracktitle"] = info["title"]
+    if album["version"] is not None:
+        mp3["album"] = info["album"] + " " + album["version"]
+    else:
+        mp3["album"] = info["album"]
+    mp3["discnumber"] = info["volume_number"]
+    mp3["totaldiscs"] = info["total_volumes"]
+    mp3["tracknumber"] = info["track_position"]
+    mp3["totaltracks"] = info["total_track"]
+    mp3["genre"] = info["genre"]
+    mp3["Year"] = info["album_year"]
+    if track.version is not None:
+        mp3["comment"] = f"{track.version} / Release date {info['album_year']}"
+    else:
+        mp3["comment"] = f"Release date {info['album_year']}"
+    mp3["artist"] = info["artist"]
+    mp3["album_artist"] = info["album_artist"]
+    try:
+        lyrics = client.tracks_lyrics(
+            track_id=track.track_id, format="TEXT"
+        ).fetch_lyrics()
+    except NotFoundError:
+        pass
+    except Exception as e:
+        logger.error(e, exc_info=True)
+    else:
+        with open(track_file.with_suffix(".txt"), "w") as text_song:
+            text_song.write(lyrics)
+        mp3["lyrics"] = lyrics
+
+    with open(album_cover_pic, "rb") as img_in:
+        mp3["artwork"] = img_in.read()
+    mp3.save()
+    logger.info("Tag's is wrote")
+
+    return track_file
 
 
 def get_album_info(album_id):
@@ -66,140 +204,71 @@ def download_album(album_id):
     album = client.albumsWithTracks(album_id=album_id)
     logger.info(
         "Album ID: %s / Album title - %s",
-        album["id"],
-        album["title"],
+        album.id,
+        album.title,
     )
-    artist_name = None
-    # создаем папку для альбома
-    if album["artists"][0]["various"]:
-        album_folder = (
-            f"{folder_music}/Various artist/{album['title']} ({album['year']})"
-        )
-    else:
-        artist_id = album["artists"][0]["id"]
-        artist_name = album["artists"][0]["name"]
-        artist_cover_link = client.artistsBriefInfo(artist_id=artist_id)
-        artist_cover_link = artist_cover_link["artist"]["cover"]["uri"].replace(
-            "%%", "1000x1000"
-        )
-        artist_folder = f"{folder_music}/{artist_name}"
-        artist_cover_pic = f"{artist_folder}/artist.jpg"
 
-        os.makedirs(os.path.dirname(f"{artist_folder}/"), exist_ok=True)
-        with open(artist_cover_pic, "wb") as f:  # качаем обложку артиста
-            rec = requests.get("http://" + artist_cover_link)
-            f.write(rec.content)
-
-        album_folder = (
-            f"{artist_folder}/"
-            f"{''.join([_ for _ in album['title'] if _ not in wrong_symbols])} ({album['year']})"
-        )
-
-    os.makedirs(os.path.dirname(f"{album_folder}/"), exist_ok=True)
-    album_cover_pic = f"{album_folder}/cover.jpg"
-    # качаем обложку альбома
-    with open(album_cover_pic, "wb") as f:
-        rec = requests.get("http://" + album["cover_uri"].replace("%%", "1000x1000"))
-        f.write(rec.content)
-
-    # проходимся по каждому диску в альбоме
-
-    n_volume = 1
-    for disk in album["volumes"]:
+    for n_volume, disk in enumerate(album.volumes, start=1):
         logger.info(
             "Start download: Volume №: %d из %d",
             n_volume,
-            len(album["volumes"]),
+            len(album.volumes),
         )
-        n_volume += 1
 
-        for track in disk:  # проходимся по каждому треку в диске
-            track_info = client.tracks_download_info(
-                track_id=track["id"], get_direct_links=True
-            )  # узнаем информацию о треке
-            track_info.sort(reverse=True, key=lambda key: key["bitrate_in_kbps"])
-            logger.info(
-                "Start Download: ID: %s %s bitrate: %s %s",
-                track["id"],
-                track["title"],
-                track_info[0]["bitrate_in_kbps"],
-                track_info[0]["direct_link"],
+        for track in disk:
+            _download_track(track)
+
+    return f"Успешно скачал альбом/сборник: {album.title} с его {album.track_count} композициями."
+
+
+def get_playlist_info(owner_id: str, playlist_id: int):
+    """Получаем информацию о плейлисте"""
+    playlist = client.users_playlists(playlist_id, owner_id)
+    if isinstance(playlist, list):
+        playlist = playlist[0]
+
+    return (
+        f"Плейлист: {playlist.title}\n"
+        f"количество треков: {playlist.track_count}"
+    )
+
+
+def download_playlist(playlist_data: str):
+    """Скачиваем плейлист"""
+    owner_id, playlist_id = playlist_data.split(":")
+    playlist = client.users_playlists(playlist_id, owner_id)
+    playlist_entries = []
+    old_root = Path(folder_music)
+    new_root = Path("music")
+
+    if isinstance(playlist, list):
+        playlist = playlist[0]
+    logger.info(
+        "Playlist owner: %s / Playlist ID: %s / Playlist title - %s",
+        playlist.owner.login,
+        playlist.playlist_id,
+        playlist.title,
+    )
+
+    for track_info in playlist.tracks:
+        track_path = _download_track(track_info.track)
+        if track_path:
+            audio = MP3(track_path)
+            if replace_playlist_path:
+                track_path = new_root / track_path.relative_to(old_root)
+
+            playlist_entries.append(
+                {
+                    "name": track_path.as_posix(),
+                    "duration": audio.info.length
+                }
             )
-            tag_info = client.tracks(track["id"])[0]
-            info = {
-                "title": tag_info["title"],
-                "volume_number": track["albums"][0]["track_position"]["volume"],
-                "total_volumes": len(album["volumes"]),
-                "track_position": track["albums"][0]["track_position"]["index"],
-                "total_track": album["track_count"],
-                "genre": tag_info["albums"][0]["genre"],
-                "artist": artist_name or tag_info["artists"][0]["name"],
-                "album_artist": [artist["name"] for artist in album["artists"]],
-                "album": album["title"],
-            }
-            if album["release_date"]:
-                info["album_year"] = album["release_date"][:10]
-            elif album["year"]:
-                info["album_year"] = album["year"]
-            else:
-                info["album_year"] = ""
 
-            os.makedirs(os.path.dirname(f"{album_folder}/"), exist_ok=True)
-            track_file = f"{album_folder}/{info['track_position']} - {''.join([ _ for _ in info['title'][:80] if _ not in wrong_symbols])}.mp3"
-            # проверяем существование трека на сервере
-            if os.path.exists(track_file):
-                logger.info("Track already exists. Continue.")
-                continue
+    playlist_path = Path(folder_music, playlist.title).with_suffix(".m3u")
+    with playlist_path.open("w") as f:
+        f.write(PlaylistGenerator(playlist_entries, playlist_name=playlist.title).generate())
 
-            client.request.download(
-                url=track_info[0]["direct_link"], filename=track_file
-            )
-            logger.info("Track downloaded. Start write tag's.")
-
-            # начинаем закачивать тэги в трек
-            mp3 = music_tag.load_file(track_file)
-            mp3["tracktitle"] = info["title"]
-            if album["version"] is not None:
-                mp3["album"] = info["album"] + " " + album["version"]
-            else:
-                mp3["album"] = info["album"]
-            mp3["discnumber"] = info["volume_number"]
-            mp3["totaldiscs"] = info["total_volumes"]
-            mp3["tracknumber"] = info["track_position"]
-            mp3["totaltracks"] = info["total_track"]
-            mp3["genre"] = info["genre"]
-            mp3["Year"] = info["album_year"]
-            if tag_info["version"] is not None:
-                mp3["comment"] = (
-                    f"{tag_info['version']} / Release date {info['album_year']}"
-                )
-            else:
-                mp3["comment"] = f"Release date {info['album_year']}"
-            mp3["artist"] = info["artist"]
-            mp3["album_artist"] = info["album_artist"]
-            try:
-                lyrics = client.tracks_lyrics(
-                    track_id=track["id"], format="TEXT"
-                ).fetch_lyrics()
-            except NotFoundError:
-                pass
-            except Exception as e:
-                logger.error(e, e)
-            else:
-                with open(
-                    track_file.replace(".mp3", ".txt"), "w", encoding="UTF8"
-                ) as text_song:
-                    text_song.write(lyrics)
-                mp3["lyrics"] = lyrics
-
-            with open(
-                album_cover_pic, "rb"
-            ) as img_in:  # кладем картинку в тег "artwork"
-                mp3["artwork"] = img_in.read()
-            mp3.save()
-            logger.info("Tag's is wrote")  # вывод в лог
-
-    return f"Успешно скачал альбом/сборник: {info['album']} с его {info['total_track']} композициями."
+    return f"Успешно скачал плейлист: {playlist.title} с его {playlist.track_count} композициями."
 
 
 def get_book_info(album_id):
