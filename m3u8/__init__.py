@@ -8,7 +8,7 @@ class PlaylistGenerator(object):
         if playlist_entries is None:
             raise Exception
 
-        self.end_playlist = True
+        self.end_playlist = False
         self.playlist_entries = playlist_entries
         self.version = version
         self.sequence = 0
