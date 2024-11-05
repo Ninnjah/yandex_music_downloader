@@ -23,7 +23,11 @@ class PlaylistGenerator(object):
     def _generate_playlist_entries(self):
         playlist = ""
         for entry in self.playlist_entries:
-            playlist += "#EXTINF:{duration}\n{media}\n".format(duration=float(entry['duration']), media=(entry['name']))
+            playlist += "#EXTINF:{duration},{title}\n{media}\n".format(
+                duration=int(-(-entry['duration'])),
+                title=entry['title'],
+                media=entry['name'],
+            )
 
         return playlist.replace(" ", "")
 
