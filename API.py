@@ -259,7 +259,7 @@ def download_playlist(playlist_data: str):
             playlist_entries.append(
                 {
                     "name": track_path.as_posix(),
-                    "title": " - ".join(track.artists_name()[0], track.title),
+                    "title": " - ".join((track.artists_name()[0], track.title)),
                     "duration": audio.info.length
                 }
             )
