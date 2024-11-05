@@ -260,7 +260,7 @@ def download_playlist(playlist_data: str):
                 {
                     "name": track_path.as_posix(),
                     "title": " - ".join((track.artists_name()[0], track.title)),
-                    "duration": audio.info.length
+                    "duration": track.duration_ms / 1000
                 }
             )
 
