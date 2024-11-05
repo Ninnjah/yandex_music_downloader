@@ -29,7 +29,7 @@ class PlaylistGenerator(object):
                 media=entry['name'],
             )
 
-        return playlist.replace(" ", "")
+        return playlist
 
     def _generate(self):
         return self._generate_playlist()
