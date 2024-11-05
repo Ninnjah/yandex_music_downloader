@@ -31,7 +31,7 @@ class PlaylistGenerator(object):
         return self._generate_playlist()
 
     def _m3u_header_template(self):
-        header = "#EXTM3U\n##PLAYLIST:{playlist_name}".format(playlist_name=self.playlist_name).strip()
+        header = "#EXTM3U\n#PLAYLIST:{playlist_name}".format(playlist_name=self.playlist_name).strip()
 
         if self.end_playlist:
             return "{}\n#EXT-X-ENDLIST".format(header)

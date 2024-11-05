@@ -239,7 +239,7 @@ def download_playlist(playlist_data: str):
     playlist = client.users_playlists(playlist_id, owner_id)
     playlist_entries = []
     old_root = Path(folder_music)
-    new_root = Path("music")
+    new_root = Path("/music")
 
     if isinstance(playlist, list):
         playlist = playlist[0]
