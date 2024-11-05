@@ -51,7 +51,6 @@ def search_and_download_artist(search: str):
     )
 
 
-# @logger.catch
 def get_album_info(album_id):
     """Получаем информацию об альбоме"""
     album = client.albumsWithTracks(album_id=album_id)
@@ -62,7 +61,6 @@ def get_album_info(album_id):
     )
 
 
-# @logger.catch
 def download_album(album_id):
     """Скачиваем альбом"""
     album = client.albumsWithTracks(album_id=album_id)
